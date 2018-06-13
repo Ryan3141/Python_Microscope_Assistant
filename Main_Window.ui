@@ -273,7 +273,7 @@
   <customwidget>
    <class>Image_Viewer</class>
    <extends>QGraphicsView</extends>
-   <header>Image_Viewer.h</header>
+   <header>Microscope_Assistant.Image_Viewer.h</header>
   </customwidget>
  </customwidgets>
  <resources/>

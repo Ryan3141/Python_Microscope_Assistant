@@ -1,9 +1,26 @@
+if __name__ == "__main__": # This allows running this module by running this script
+	import sys
+	sys.path.insert(0, "..")
+
 import sys
 from PyQt5 import QtNetwork, QtCore, QtGui, uic, QtWidgets
 import configparser
-from Py_Microscope_Assistant import Camera_Reader_Thread
+from Microscope_Assistant.Py_Microscope_Assistant import Camera_Reader_Thread
 
-qtCreatorFile = "Main_Window.ui" # GUI layout file.
+__version__ = '0.1'
+
+import os
+def resource_path(relative_path):  # Define function to import external files when using PyInstaller.
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+qtCreatorFile = resource_path(os.path.join("Microscope_Assistant", "Main_Window.ui" )) # GUI layout file.
 
 Ui_MainWindow, QtBaseClass = uic.loadUiType(qtCreatorFile)
 
@@ -14,12 +31,12 @@ def Resize_On_First_Call( image, image_object, signal ):
 	image_object.fitImageInView()
 	signal.connect( image_object.setImage )
 
-class MyApp(QtWidgets.QWidget, Ui_MainWindow):
+class Microscope_Assistant_GUI(QtWidgets.QWidget, Ui_MainWindow):
 
 	#Set_New_Temperature_K = QtCore.pyqtSignal(float)
 	#Turn_Off_Temperature_Control = QtCore.pyqtSignal(float)
-	def __init__(self):
-		QtWidgets.QWidget.__init__(self)
+	def __init__(self, parent=None, root_window=None):
+		QtWidgets.QWidget.__init__(self, parent)
 		Ui_MainWindow.__init__(self)
 		self.setupUi(self)
 
@@ -47,7 +64,7 @@ class MyApp(QtWidgets.QWidget, Ui_MainWindow):
 
 if __name__ == "__main__":
 	app = QtWidgets.QApplication(sys.argv)
-	window = MyApp()
+	window = Microscope_Assistant_GUI()
 	window.show()
 	sys.exit(app.exec_())
 

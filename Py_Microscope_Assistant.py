@@ -1,4 +1,5 @@
 import numpy as np
+from numpy import linalg
 import cv2
 from matplotlib import pyplot as plt
 from scipy import stats
@@ -25,7 +26,7 @@ def Overlay_Image( bottom_image, top_image, offset ):
 	bottom_image[int(offset[0]):int(end_spot[0]),int(offset[1]):int(end_spot[1]),:] = top_image[:,:,:]
 
 def Combine_Images( img1, img2, offset, overall_offset ):
-	offset = np.array( offset ).astype(int)
+	offset = np.array( [round( offset[0]), round(offset[1])] ).astype(int)
 	overall_offset = np.array( overall_offset ).astype(int)
 	 
 	relative_to_origin = overall_offset + offset
@@ -49,10 +50,10 @@ def Combine_Images( img1, img2, offset, overall_offset ):
 
 if __name__ == "__main__":
 	cap = cv2.VideoCapture(0)
-	#cap.set(3,1280) # X Resolution
-	#cap.set(4,720) # Y Resolution
-	cap.set(3,640) # X Resolution
-	cap.set(4,480) # Y Resolution
+	cap.set(3,1280) # X Resolution
+	cap.set(4,720) # Y Resolution
+	#cap.set(3,1920) # X Resolution
+	#cap.set(4,1080) # Y Resolution
 	cap.set( cv2.CAP_PROP_EXPOSURE, -8.0) # Exposure
 	cap.set( cv2.CAP_PROP_AUTO_EXPOSURE, True )
 
@@ -159,10 +160,10 @@ class Camera_Reader_Thread( QtCore.QThread ):
 		#while True:
 			#QThread.msleep(100)
 			# Capture frame-by-frame
-		ret, combined_img = self.cap.read()
-		if combined_img is not None:
-			self.cameraFrameReady_signal.emit( combined_img )
-			self.macroFrameReady_signal.emit( combined_img )
+		#self.cap.set(3,1280) # X Resolution
+		#self.cap.set(4,720) # Y Resolution
+		self.cap.set(3,640) # X Resolution
+		self.cap.set(4,480) # Y Resolution
 
 
 		# Initiate ORB detector
@@ -170,10 +171,28 @@ class Camera_Reader_Thread( QtCore.QThread ):
 		#orb = cv2.ORB_create()
 		#orb = cv2.xfeatures2D.SIFT_create()
 		overall_offset = np.array([0,0])
-
-		reference_keypoints, reference_descriptors = orb.detectAndCompute(combined_img,None)
+		#reference_keypoints, reference_descriptors = orb.detectAndCompute(combined_img,None)
 		# create BFMatcher object
-		bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+		#bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+		FLANN_INDEX_KDTREE = 1
+		index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
+		search_params = dict(checks = 50)
+		flann = cv2.FlannBasedMatcher(index_params, search_params)
+
+		while( True ):
+			ret, combined_img = self.cap.read()
+			if combined_img is None:
+				continue
+			combined_img_gray = cv2.cvtColor( combined_img, cv2.COLOR_BGR2GRAY )
+			reference_keypoints, reference_descriptors = orb.detectAndCompute(combined_img_gray,None)
+			if len( reference_keypoints ) > 0:
+				break
+
+		self.cameraFrameReady_signal.emit( combined_img )
+		self.macroFrameReady_signal.emit( combined_img )
+
+		self.cap.set(3,640) # X Resolution
+		self.cap.set(4,480) # Y Resolution
 
 		while(True):
 			# Capture frame-by-frame
@@ -182,7 +201,9 @@ class Camera_Reader_Thread( QtCore.QThread ):
 				continue
 
 			# find the keypoints and descriptors with SIFT
-			active_image_keypoints, active_image_descriptors = orb.detectAndCompute(active_image,None)
+			active_image_gray = cv2.cvtColor( active_image, cv2.COLOR_BGR2GRAY )
+			active_image_keypoints, active_image_descriptors = orb.detectAndCompute(active_image_gray,None)
+			#active_image_keypoints, active_image_descriptors = orb.detectAndCompute(active_image,None)
 
 			blurrieness = calcBlurriness( active_image )
 			image_for_display = active_image.copy()
@@ -190,21 +211,35 @@ class Camera_Reader_Thread( QtCore.QThread ):
 			cv2.putText(image_for_display, 'Blurriness: ' + str(blurrieness), (10, 40), font, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
 			self.cameraFrameReady_signal.emit( image_for_display )
 
-			if len(active_image_keypoints) == 0:
+			if len(active_image_keypoints) <= 1:
 				continue
 			#if blurrieness > 1.9e-4:
 			#	continue
 
 			# Match descriptors.
-			matches = bf.match(reference_descriptors, active_image_descriptors)
+			#matches = bf.match(reference_descriptors, active_image_descriptors)
+			matches = flann.knnMatch( reference_descriptors, active_image_descriptors, 2 )
+			#img3 = cv2.drawMatches(combined_img,reference_keypoints,active_image,active_image_keypoints,matches[:10], None, flags=2)
+			#cv2.imshow('match',img3)
+			#if cv2.waitKey(1) & 0xFF == ord('s'):
+			#	break
 
-			img3 = cv2.drawMatches(combined_img,reference_keypoints,active_image,active_image_keypoints,matches[:10], None, flags=2)
-			cv2.imshow('match',img3)
-			if cv2.waitKey(1) & 0xFF == ord('s'):
-				break
-
-			# Sort them in the order of their distance.
-			matches = sorted(matches, key = lambda x:x.distance)
+			# store all the good matches as per Lowe's ratio test.
+			good = []
+			for m,n in matches:
+				if m.distance < 0.7*n.distance:
+					good.append(m)			# Sort them in the order of their distance.
+			draw_params = dict(matchColor = (0,255,0), # draw matches in green color
+							   singlePointColor = None,
+							   flags = 2)
+			#img3 = cv2.drawMatches(combined_img,reference_keypoints,active_image,active_image_keypoints,good,None,**draw_params)
+			#cv2.imshow('match',img3)
+			#if cv2.waitKey(1) & 0xFF == ord('s'):
+			#	break
+			matches = good
+			if len( good ) < 3:
+				continue
+			#matches = sorted(matches, key = lambda x:x.distance)
 			x_delta =[ active_image_keypoints[match.trainIdx].pt[ 0 ] - reference_keypoints[match.queryIdx].pt[ 0 ] for match in matches[:20] ]
 			y_delta = [ active_image_keypoints[match.trainIdx].pt[ 1 ] - reference_keypoints[match.queryIdx].pt[ 1 ] for match in matches[:20] ]
 			#offset = (-stats.mode(y_delta, axis=0)[0][0], -stats.mode(x_delta, axis=0)[0][0])
@@ -213,8 +248,8 @@ class Camera_Reader_Thread( QtCore.QThread ):
 			test_combined_img, test_overall_offset = Combine_Images( combined_img, active_image, offset, overall_offset )
 			#cv2.putText(test_combined_img, 'offset: ' + str(offset[0]) + ' ' + str(offset[1]), (10, 40), font, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
 
-			for i in range( min(len(x_delta), 10) ):
-				cv2.putText(test_combined_img, 'offset: ' + str(x_delta[i]) + ' ' + str(y_delta[i]), (10, (1+i)*40), font, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
+			#for i in range( min(len(x_delta), 10) ):
+			#	cv2.putText(test_combined_img, 'offset: ' + str(x_delta[i]) + ' ' + str(y_delta[i]), (10, (1+i)*40), font, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
 
 			self.macroFrameReady_signal.emit( test_combined_img )
 
