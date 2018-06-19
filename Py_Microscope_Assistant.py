@@ -1,3 +1,4 @@
+import time
 import numpy as np
 from numpy import linalg
 import cv2
@@ -10,6 +11,9 @@ try:
 except:
 	raise ImportError( "Need to run: python -m pip install opencv-python opencv-contrib-python" )
 
+reduce = 1
+x_pixel = 4224
+y_pixel = 3156
 
 # Adapted from http://answers.opencv.org/question/5395/how-to-calculate-blurriness-and-sharpness-of-a-given-image/
 def calcBlurriness( src_image ):
@@ -48,124 +52,83 @@ def Combine_Images( img1, img2, offset, overall_offset ):
 
 	return new_combined_image, overall_offset - new_shift_in_origin
 
-if __name__ == "__main__":
-	cap = cv2.VideoCapture(0)
-	cap.set(3,1280) # X Resolution
-	cap.set(4,720) # Y Resolution
-	#cap.set(3,1920) # X Resolution
-	#cap.set(4,1080) # Y Resolution
-	cap.set( cv2.CAP_PROP_EXPOSURE, -8.0) # Exposure
-	cap.set( cv2.CAP_PROP_AUTO_EXPOSURE, True )
-
-	img1 = None
-	img3 = None
-	while(True):
-		# Capture frame-by-frame
-		ret, img1 = cap.read()
-		if img1 is None:
-			continue
-
-		## Our operations on the frame come here
-		#img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
-
-		# Display the resulting frame
-		cv2.imshow('frame',img1)
-		if cv2.waitKey(1) & 0xFF == ord('s'):
-			break
-
-	#img1 = cv2.imread('box.png',0)          # queryImage
-	#img2 = cv2.imread('box_in_scene.png',0) # trainImage
-	img3 = np.zeros( (img1.shape[0],img1.shape[1] * 2,img1.shape[2]), img1.dtype )
-
-	# Initiate SIFT detector
-	orb = cv2.ORB_create()
-	overall_offset = np.array([0,0])
-
-	kp1, des1 = orb.detectAndCompute(img1,None)
-	combined_img = img1
-	while(True):
-		# Capture frame-by-frame
-		ret, img2 = cap.read()
-		if img2 is None:
-			continue
-
-		# find the keypoints and descriptors with SIFT
-		kp2, des2 = orb.detectAndCompute(img2,None)
-
-		if len(kp2) == 0:
-			blurrieness = calcBlurriness( img2 )
-			img3[:,img1.shape[1]:,:] = img2[:,:,:]
-			font = cv2.FONT_HERSHEY_SIMPLEX
-			cv2.putText(img3, 'Blurriness: ' + str(blurrieness), (500, 400), font, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
-
-			cv2.imshow('match',img3)
-			if cv2.waitKey(1) & 0xFF == ord('s'):
-				break
-			continue
-		# create BFMatcher object
-		bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-
-		# Match descriptors.
-		matches = bf.match(des1,des2)
-
-		# Sort them in the order of their distance.
-		matches = sorted(matches, key = lambda x:x.distance)
-		#test1 = des1[matches[0].queryIdx][ 0 ]
-		#test2 = des1[matches[0].queryIdx][ 1 ]
-		#test3 = des1[matches[0].queryIdx][ 2 ]
-		x_delta =[ kp2[match.trainIdx].pt[ 0 ] - kp1[match.queryIdx].pt[ 0 ] for match in matches[:10] ]
-		y_delta = [ kp2[match.trainIdx].pt[ 1 ] - kp1[match.queryIdx].pt[ 1 ] for match in matches[:10] ]
-		offset = (-stats.mode(y_delta, axis=0)[0][0], -stats.mode(x_delta, axis=0)[0][0])
-		combined_img, overall_offset = Combine_Images( combined_img, img2, offset, overall_offset )
-		cv2.imshow('Combined',combined_img)
-		img3 = cv2.drawMatches(img1,kp1,img2,kp2,matches[:10], None, flags=2)
-
-		font = cv2.FONT_HERSHEY_SIMPLEX
-		blurrieness = calcBlurriness( img2 )
-		#if blurrieness > 1.9e-4:
-		#	continue
-		cv2.putText(img3, 'Blurriness: ' + str(blurrieness), (500, 400), font, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
-
-		#cv2.imshow('match',img3)
-		plt.imshow(img3),plt.show()
-		if cv2.waitKey(1) & 0xFF == ord('s'):
-			break
-
-	# When everything done, release the capture
-	self.cap.release()
-	cv2.destroyAllWindows()
-
 
 class Camera_Reader_Thread( QtCore.QThread ):
+
+	"""Thread for the left camera frame. """
+
 	cameraFrameReady_signal = QtCore.pyqtSignal(np.ndarray)
-	macroFrameReady_signal = QtCore.pyqtSignal(np.ndarray)
+	blurriness_signal = QtCore.pyqtSignal(float)
 
 	def __init__(self, parent=None):
 		super(Camera_Reader_Thread, self).__init__(parent)
 
+		self.w = 0
+		self.h = 0
+		self.resolution_x = 0
+		self.resolution_y = 0
+		self.active_image = None
+
 	def Initialize( self ):
 		self.cap = cv2.VideoCapture(0)
-		self.cap.set(3,640) # X Resolution
-		self.cap.set(4,480) # Y Resolution
+		self.w = self.cap.get(3)
+		self.h = self.cap.get(4)
+		print("Camera resolution: {}x{}".format(self.w, self.h))
+
+		# self.resolution_x = self.w / reduce
+		# self.resolution_y = self.h / reduce
+		self.resolution_x = x_pixel
+		self.resolution_y = y_pixel
+		self.cap.set(3,self.resolution_x) # X Resolution
+		self.cap.set(4,self.resolution_y) # Y Resolution
 		self.cap.set( cv2.CAP_PROP_EXPOSURE, -3.0 ) # Exposure
 		self.cap.set( cv2.CAP_PROP_AUTO_EXPOSURE, True )
 
 
 	def Change_Exposure( self, exposure ):
-		debug = exposure / 10.0
 		self.cap.set( cv2.CAP_PROP_EXPOSURE, exposure / 10.0 )
 
 	def run(self):
 		self.Initialize()
-		#while True:
-			#QThread.msleep(100)
+		counter = 0
+		while(True):
 			# Capture frame-by-frame
-		#self.cap.set(3,1280) # X Resolution
-		#self.cap.set(4,720) # Y Resolution
-		self.cap.set(3,640) # X Resolution
-		self.cap.set(4,480) # Y Resolution
+			ret, self.active_image = self.cap.read()
+			if self.active_image is None:
+				continue
 
+			self.cameraFrameReady_signal.emit(self.active_image)
+			if counter == 30:
+				blurrieness = calcBlurriness(self.active_image)
+				self.blurriness_signal.emit(blurrieness)
+				counter = 0
+			else:
+				counter += 1
+			# QtCore.QCoreApplication.processEvents()
+			continue
+		# When everything done, release the capture
+		self.cap.release()
+		cv2.destroyAllWindows()
 
+class Camera_Macro_Thread( QtCore.QThread ):
+
+	"""Thread for the right camera frame. """
+
+	macroFrameReady_signal = QtCore.pyqtSignal(np.ndarray)
+
+	def __init__(self, parent=None):
+		super(Camera_Macro_Thread, self).__init__(parent)
+
+		self.first_image = None
+		self.active_image = None
+		self.w = 0
+		self.h = 0
+		self.resolution_x = 0
+		self.resolution_y = 0
+
+		self._isrunning = 1
+
+	def run(self):
 		# Initiate ORB detector
 		orb = cv2.xfeatures2d.SIFT_create()
 		#orb = cv2.ORB_create()
@@ -180,36 +143,29 @@ class Camera_Reader_Thread( QtCore.QThread ):
 		flann = cv2.FlannBasedMatcher(index_params, search_params)
 
 		while( True ):
-			ret, combined_img = self.cap.read()
-			if combined_img is None:
+			if self.first_image is None:
 				continue
-			combined_img_gray = cv2.cvtColor( combined_img, cv2.COLOR_BGR2GRAY )
+			combined_img_gray = cv2.cvtColor( self.first_image, cv2.COLOR_BGR2GRAY )
 			reference_keypoints, reference_descriptors = orb.detectAndCompute(combined_img_gray,None)
 			if len( reference_keypoints ) > 0:
 				break
 
-		self.cameraFrameReady_signal.emit( combined_img )
-		self.macroFrameReady_signal.emit( combined_img )
-
-		self.cap.set(3,640) # X Resolution
-		self.cap.set(4,480) # Y Resolution
+		self.macroFrameReady_signal.emit( self.first_image )
 
 		while(True):
-			# Capture frame-by-frame
-			ret, active_image = self.cap.read()
-			if active_image is None:
+			if self._isrunning == 0:
+				break
+			if self.active_image is None:
 				continue
 
 			# find the keypoints and descriptors with SIFT
-			active_image_gray = cv2.cvtColor( active_image, cv2.COLOR_BGR2GRAY )
+			active_image_gray = cv2.cvtColor( self.active_image, cv2.COLOR_BGR2GRAY )
 			active_image_keypoints, active_image_descriptors = orb.detectAndCompute(active_image_gray,None)
 			#active_image_keypoints, active_image_descriptors = orb.detectAndCompute(active_image,None)
 
-			blurrieness = calcBlurriness( active_image )
-			image_for_display = active_image.copy()
-			font = cv2.FONT_HERSHEY_SIMPLEX
-			cv2.putText(image_for_display, 'Blurriness: ' + str(blurrieness), (10, 40), font, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
-			self.cameraFrameReady_signal.emit( image_for_display )
+			image_for_display = self.active_image.copy()
+			# font = cv2.FONT_HERSHEY_SIMPLEX
+			#cv2.putText(image_for_display, 'Blurriness: ' + str(blurrieness), (10, 40), font, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
 
 			if len(active_image_keypoints) <= 1:
 				continue
@@ -245,42 +201,14 @@ class Camera_Reader_Thread( QtCore.QThread ):
 			#offset = (-stats.mode(y_delta, axis=0)[0][0], -stats.mode(x_delta, axis=0)[0][0])
 			offset = ( -np.median(y_delta), -np.median(x_delta) )
 			#offset = (-y_delta[0], -x_delta[0])
-			test_combined_img, test_overall_offset = Combine_Images( combined_img, active_image, offset, overall_offset )
+			test_combined_img, test_overall_offset = Combine_Images( self.first_image, self.active_image, offset, overall_offset )
 			#cv2.putText(test_combined_img, 'offset: ' + str(offset[0]) + ' ' + str(offset[1]), (10, 40), font, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
 
 			#for i in range( min(len(x_delta), 10) ):
 			#	cv2.putText(test_combined_img, 'offset: ' + str(x_delta[i]) + ' ' + str(y_delta[i]), (10, (1+i)*40), font, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
 
 			self.macroFrameReady_signal.emit( test_combined_img )
+			time.sleep(0.5)		# Since the macro thread is no longer slowing down camera thread, maybe we don't need this one.
 
 			QtCore.QCoreApplication.processEvents()
 
-		# When everything done, release the capture
-		self.cap.release()
-		cv2.destroyAllWindows()
-
-
-def Newtons_Method( y_value ):
-	x_initial_guess = 1.0
-	target_resolution = 1e-2
-	i = 0
-	while( True ):
-		i += 1
-		x_i_old = x_i
-		x_i = x_i - (Function_of_x( x_i ) - y_value) / Derivative_of_Function_of_x( x_i );
-		if( abs( x_i - x_i_old ) < target_resolution ):
-			return x_i
-
-def Binary_Search( y_value ):
-	left = -270.0
-	right = 270
-	target_resolution = 1e-2
-	while( right - left > target_resolution ):
-		center = (right + left) / 2
-		if( y_value < Function_of_x( center ) ):
-			right = center
-		else:
-			left = center
-	center = (right + left) / 2
-
-	return center

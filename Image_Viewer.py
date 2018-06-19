@@ -1,5 +1,11 @@
 from PyQt5 import QtNetwork, QtCore, QtGui, uic, QtWidgets
+from PyQt5 import *
+from PyQt5 import uic, QtGui, QtOpenGL
+from PyQt5.QtCore import *
+from PyQt5.QtGui import *
+from PyQt5.QtWidgets import *
 from cv2 import cvtColor, COLOR_BGR2RGB
+from sys import platform as _platform
 
 
 class Image_Viewer( QtWidgets.QGraphicsView ):
@@ -8,18 +14,21 @@ class Image_Viewer( QtWidgets.QGraphicsView ):
 		super().__init__( parent )
 
 		self._zoom = 0;
-		self._scene = QtWidgets.QGraphicsScene( self );
+		self._scene = QtWidgets.QGraphicsScene( self )
 		self._photo = None
-		self._photo_handle = None;
+		self._photo_handle = None
 		#self._scene.addItem( self._photo );
-		self.setScene( self._scene );
+		self.setScene( self._scene )
 
-		self.setTransformationAnchor( QtWidgets.QGraphicsView.AnchorUnderMouse );
-		self.setResizeAnchor( QtWidgets.QGraphicsView.AnchorUnderMouse );
-		self.setVerticalScrollBarPolicy( QtCore.Qt.ScrollBarAlwaysOff );
-		self.setHorizontalScrollBarPolicy( QtCore.Qt.ScrollBarAlwaysOff );
+		self.setTransformationAnchor( QtWidgets.QGraphicsView.AnchorUnderMouse )
+		self.setResizeAnchor( QtWidgets.QGraphicsView.AnchorUnderMouse )
+		self.setVerticalScrollBarPolicy( QtCore.Qt.ScrollBarAlwaysOff )
+		self.setHorizontalScrollBarPolicy( QtCore.Qt.ScrollBarAlwaysOff )
 		#self.setBackgroundBrush( QBrush( QColor( 30, 30, 30 ) ) );
-		self.setFrameShape( QtWidgets.QFrame.NoFrame );
+		self.setFrameShape( QtWidgets.QFrame.NoFrame )
+
+		self.viewport().grabGesture(Qt.PinchGesture)
+		self.firstcall = 1
 
 		#right_graphicsView
 
@@ -42,10 +51,12 @@ class Image_Viewer( QtWidgets.QGraphicsView ):
 		if self._photo is not None:
 			self._photo_handle = self._scene.addPixmap( self._photo )
 			self.setDragMode( QtWidgets.QGraphicsView.ScrollHandDrag )
-			#self.fitImageInView()
 		else:
 			self.setDragMode( QtWidgets.QGraphicsView.NoDrag )
 
+		if self.firstcall == 1:
+			self.fitImageInView()
+			self.firstcall = 0
 
 	def fitImageInView( self ):
 		if self._photo is None:
@@ -80,29 +91,38 @@ class Image_Viewer( QtWidgets.QGraphicsView ):
 			return;
 		super().mousePressEvent( event )
 
+	if _platform != "darwin":	# Use the mouse scroll wheel to zoom in and out for Windows and other systems.
+		def wheelEvent( self, event ):
+			if( self._photo is None or self._photo.isNull() ):
+				return
+			change = 1.0
+			if( event.angleDelta().y() > 0 ):
+				change = 1.25
+				self._zoom += 1
+			else:
+				change = 0.8
+				self._zoom -= 1
 
-	def wheelEvent( self, event ):
-		if( self._photo is None or self._photo.isNull() ):
-			return
+			if( self._zoom > 0 ):
+				self.scale( change, change )
+			elif( self._zoom == 0 ):
+				self.fitImageInView()
+			else:
+				self.fitImageInView()
+				self._zoom = 0
 
-		change = 1.0
-		test_x = event.angleDelta().x()
-		test_y = event.angleDelta().y()
-		test2_x = event.pixelDelta().x()
-		test2_y = event.pixelDelta().y()
-		if( event.angleDelta().y() > 0 ):
-			change = 1.25
-			self._zoom += 1
-		else:
-			change = 0.8
-			self._zoom -= 1
+			event.accept()
 
-		if( self._zoom > 0 ):
-			self.scale( change, change )
-		elif( self._zoom == 0 ):
-			self.fitImageInView()
-		else:
-			self.fitImageInView()
-			self._zoom = 0
-
-		event.accept()
+	if _platform == "darwin":  # Use Multi-touch trackpad to zoom in and out for mac.
+		def viewportEvent(self, event):
+			if event.type() == QEvent.Gesture:
+				pinch = event.gesture(Qt.PinchGesture)
+				if pinch:
+					changeFlags = pinch.changeFlags()
+					if changeFlags & QPinchGesture.ScaleFactorChanged:
+						factor = pinch.property("scaleFactor")
+						self.scale(factor, factor)
+					if pinch.state() == Qt.GestureFinished:
+						pass
+					return True
+			return QGraphicsView.viewportEvent(self, event)
